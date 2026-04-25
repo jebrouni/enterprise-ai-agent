@@ -1,0 +1,198 @@
+version: "3.9"
+
+# ════════════════════════════════════════════════════════════════════════
+#  DOCKER COMPOSE — Stack Enterprise Complète
+#
+#  Services démarrés :
+#  ┌─────────────────┬──────────┬─────────────────────────────────────┐
+#  │ Service         │ Port     │ Description                         │
+#  ├─────────────────┼──────────┼─────────────────────────────────────┤
+#  │ Keycloak        │ 8180     │ Auth server OAuth2/OIDC             │
+#  │ PostgreSQL KC   │ 5433     │ BDD de Keycloak                     │
+#  │ Redis           │ 6379     │ Cache + Rate Limiting               │
+#  │ Prometheus      │ 9090     │ Scraping des métriques              │
+#  │ Grafana         │ 3000     │ Dashboards de monitoring            │
+#  │ AI Agent API    │ 8080     │ Notre application Spring Boot       │
+#  └─────────────────┴──────────┴─────────────────────────────────────┘
+#
+#  Lancer avec : docker-compose up -d
+#  Arrêter avec: docker-compose down -v
+# ════════════════════════════════════════════════════════════════════════
+
+networks:
+  ai-agent-network:
+    driver: bridge
+
+volumes:
+  keycloak-db-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
+
+services:
+
+  # ════════════════════════════════════
+  #  KEYCLOAK — Serveur d'authentification
+  # ════════════════════════════════════
+  keycloak-db:
+    image: postgres:16-alpine
+    container_name: keycloak-db
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_secret
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql/data
+    networks:
+      - ai-agent-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.3
+    container_name: keycloak
+    command: start-dev --import-realm
+    environment:
+      # Admin Keycloak
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+
+      # Base de données
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_secret
+
+      # Configuration du serveur
+      KC_HOSTNAME: localhost
+      KC_HOSTNAME_PORT: 8180
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+
+    ports:
+      - "8180:8080"
+    volumes:
+      # Import automatique du realm au démarrage
+      - ./keycloak/ai-agent-realm.json:/opt/keycloak/data/import/ai-agent-realm.json:ro
+    networks:
+      - ai-agent-network
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health/ready || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # ════════════════════════════════════
+  #  REDIS — Cache + Rate Limiting
+  # ════════════════════════════════════
+  redis:
+    image: redis:7.2-alpine
+    container_name: redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - ai-agent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ════════════════════════════════════
+  #  PROMETHEUS — Métriques
+  # ════════════════════════════════════
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    container_name: prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/etc/prometheus/console_libraries
+      - --web.console.templates=/etc/prometheus/consoles
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - ai-agent-network
+
+  # ════════════════════════════════════
+  #  GRAFANA — Dashboards
+  # ════════════════════════════════════
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Auto-provision Prometheus datasource
+      GF_DATASOURCES_DEFAULT_URL: http://prometheus:9090
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./docker/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+    networks:
+      - ai-agent-network
+    depends_on:
+      - prometheus
+
+  # ════════════════════════════════════
+  #  AI AGENT — Notre Application
+  # ════════════════════════════════════
+  ai-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-agent
+    environment:
+      # API Anthropic (obligatoire)
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+      # Keycloak
+      KEYCLOAK_URL: http://keycloak:8080
+      KEYCLOAK_REALM: ai-agent-realm
+      KEYCLOAK_CLIENT_ID: ai-agent-client
+
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # Spring Profile
+      SPRING_PROFILES_ACTIVE: docker
+
+      # JVM Options
+      JAVA_OPTS: >-
+        -Xms512m -Xmx1g
+        -XX:+UseG1GC
+        -XX:MaxGCPauseMillis=200
+        -Djava.security.egd=file:/dev/./urandom
+    ports:
+      - "8080:8080"
+    networks:
+      - ai-agent-network
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/api/v1/agent/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5

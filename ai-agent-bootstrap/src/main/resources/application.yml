@@ -1,0 +1,137 @@
+# ════════════════════════════════════════════════════════════════════════
+#  ENTERPRISE AI AGENT — Configuration principale (application.yml)
+#  Les secrets sont dans les variables d'environnement (jamais en clair)
+# ════════════════════════════════════════════════════════════════════════
+
+spring:
+  application:
+    name: enterprise-ai-agent
+
+  # ── Sécurité OAuth2 / Keycloak ──────────────────────────────────────────
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/${KEYCLOAK_REALM:ai-agent-realm}
+          jwk-set-uri: ${KEYCLOAK_URL:http://localhost:8180}/realms/${KEYCLOAK_REALM:ai-agent-realm}/protocol/openid-connect/certs
+
+  # ── Redis ────────────────────────────────────────────────────────────────
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 10
+          max-idle: 5
+          min-idle: 2
+
+  # ── Jackson ─────────────────────────────────────────────────────────────
+  jackson:
+    serialization:
+      indent-output: true
+      write-dates-as-timestamps: false
+    default-property-inclusion: NON_NULL
+
+server:
+  port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+    mime-types: application/json
+  error:
+    include-message: never  # Ne jamais exposer les stack traces en prod
+
+# ── Anthropic / Claude ────────────────────────────────────────────────────
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY}
+  base-url: https://api.groq.com/openai
+  model: llama-3.1-8b-instant    # ← changer ici
+  max-tokens: 2048
+  api-version: "2023-06-01"
+
+
+# ── Keycloak Admin ────────────────────────────────────────────────────────
+keycloak:
+  realm: ${KEYCLOAK_REALM:ai-agent-realm}
+  resource: ${KEYCLOAK_CLIENT_ID:ai-agent-client}
+  auth-server-url: ${KEYCLOAK_URL:http://localhost:8180}
+  admin:
+    client-id: admin-cli
+    username: ${KEYCLOAK_ADMIN_USER:admin}
+    password: ${KEYCLOAK_ADMIN_PASSWORD:admin}
+
+# ── Rate Limiting ──────────────────────────────────────────────────────────
+rate-limit:
+  user-limit: 30
+  admin-limit: 100
+  window-seconds: 60
+
+# ── Resilience4j — Circuit Breaker ────────────────────────────────────────
+resilience4j:
+  circuitbreaker:
+    instances:
+      anthropicApi:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+        slidingWindowType: COUNT_BASED
+        registerHealthIndicator: true
+  retry:
+    instances:
+      anthropicApi:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+        retryExceptions:
+          - com.enterprise.aiagent.core.exception.LlmException
+  timelimiter:
+    instances:
+      anthropicApi:
+        timeoutDuration: 45s
+
+# ── Logging structuré ──────────────────────────────────────────────────────
+logging:
+  level:
+    com.enterprise.aiagent: DEBUG
+    org.springframework.web.reactive: DEBUG
+    io.github.resilience4j: INFO
+  pattern:
+    console: "%d{HH:mm:ss} %-5level [%X{requestId}] [%X{username}] %logger{36} - %msg%n"
+
+# ── Spring Actuator & Micrometer ──────────────────────────────────────────
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus,circuitbreakers,caches
+  endpoint:
+    health:
+      show-details: when-authorized
+      roles: AI_ADMIN
+  metrics:
+    tags:
+      application: ${spring.application.name}
+      environment: ${SPRING_PROFILES_ACTIVE:development}
+
+# ── OpenAPI / Swagger ────────────────────────────────────────────────────
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    oauth:
+      client-id: ${KEYCLOAK_CLIENT_ID:ai-agent-client}
+      realm: ${KEYCLOAK_REALM:ai-agent-realm}
+  show-actuator: false
+
+# ── Info Actuator ─────────────────────────────────────────────────────────
+info:
+  app:
+    name: Enterprise AI Code Agent
+    version: 2.0.0
+    description: Agent IA sécurisé avec Keycloak + Claude + Redis
+    java-version: "@java.version@"

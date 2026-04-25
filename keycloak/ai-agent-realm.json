@@ -1,0 +1,127 @@
+{
+  "realm": "ai-agent-realm",
+  "displayName": "AI Agent Realm",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "refreshTokenMaxReuse": 0,
+
+  "roles": {
+    "realm": [
+      {
+        "name": "AI_USER",
+        "description": "Utilisateur standard — accès aux endpoints /ask et /review"
+      },
+      {
+        "name": "AI_ADMIN",
+        "description": "Administrateur — accès complet + métriques + audit + security-audit"
+      },
+      {
+        "name": "AI_READONLY",
+        "description": "Lecture seule — health check uniquement"
+      }
+    ]
+  },
+
+  "clients": [
+    {
+      "clientId": "ai-agent-client",
+      "name": "AI Code Agent",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "ai-agent-secret-change-in-production",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/*",
+        "http://localhost:3000/*"
+      ],
+      "webOrigins": ["+"],
+      "defaultClientScopes": ["openid", "profile", "email", "roles"],
+      "protocolMappers": [
+        {
+          "name": "realm-roles-mapper",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "userinfo.token.claim": "true",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "realm_access.roles",
+            "jsonType.label": "String"
+          }
+        }
+      ]
+    },
+    {
+      "clientId": "swagger-ui",
+      "name": "Swagger UI Client",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/swagger-ui/*",
+        "http://localhost:8080/swagger-ui.html"
+      ],
+      "webOrigins": ["http://localhost:8080"]
+    }
+  ],
+
+  "users": [
+    {
+      "username": "user-demo",
+      "email": "user@aiagent.com",
+      "firstName": "Utilisateur",
+      "lastName": "Demo",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "User@1234",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["AI_USER"]
+    },
+    {
+      "username": "admin-demo",
+      "email": "admin@aiagent.com",
+      "firstName": "Administrateur",
+      "lastName": "Demo",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "Admin@1234",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["AI_USER", "AI_ADMIN"]
+    }
+  ],
+
+  "passwordPolicy": "length(8) and upperCase(1) and digits(1) and notUsername(undefined)",
+
+  "smtpServer": {},
+
+  "eventsEnabled": true,
+  "eventsListeners": ["jboss-logging"],
+  "enabledEventTypes": [
+    "LOGIN", "LOGOUT", "LOGIN_ERROR", "REGISTER",
+    "CODE_TO_TOKEN", "CODE_TO_TOKEN_ERROR",
+    "CLIENT_LOGIN", "CLIENT_LOGIN_ERROR"
+  ]
+}
