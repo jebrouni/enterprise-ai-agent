@@ -16,7 +16,6 @@ target/
 .vscode/
 application-dev.yml
 application-local.yml
-application-prod.yml
 .env
 .env.local
 *.env

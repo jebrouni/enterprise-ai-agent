@@ -1,0 +1,76 @@
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}
+          jwk-set-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}/protocol/openid-connect/certs
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      ssl:
+        enabled: true
+      timeout: 3000ms
+  cache:
+    type: redis
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
+    default-property-inclusion: NON_NULL
+
+server:
+  port: ${PORT:8080}
+
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY}
+  base-url: https://api.groq.com/openai
+  model: ${LLM_MODEL:llama-3.1-8b-instant}
+  max-tokens: 2048
+  api-version: "2023-06-01"
+
+keycloak:
+  realm: ${KEYCLOAK_REALM:ai-agent-realm}
+  resource: ${KEYCLOAK_CLIENT_ID:ai-agent-client}
+  auth-server-url: ${KEYCLOAK_URL}
+  client-secret: ${KEYCLOAK_CLIENT_SECRET:ai-agent-secret}
+
+rate-limit:
+  user-limit: 30
+  admin-limit: 100
+  window-seconds: 60
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      anthropicApi:
+        slidingWindowSize: 10
+        minimumNumberOfCalls: 5
+        failureRateThreshold: 50
+        waitDurationInOpenState: 30s
+        permittedNumberOfCallsInHalfOpenState: 3
+  retry:
+    instances:
+      anthropicApi:
+        maxAttempts: 3
+        waitDuration: 1s
+        exponentialBackoffMultiplier: 2
+  timelimiter:
+    instances:
+      anthropicApi:
+        timeoutDuration: 60s
+
+logging:
+  level:
+    com.enterprise.aiagent: INFO
+    org.springframework.security: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
