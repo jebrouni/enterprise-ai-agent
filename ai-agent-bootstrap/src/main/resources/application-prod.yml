@@ -5,6 +5,11 @@ spring:
         jwt:
           issuer-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}
           jwk-set-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}/protocol/openid-connect/certs
+
+# Désactiver la validation au démarrage
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.actuate.autoconfigure.security.reactive.ReactiveManagementWebSecurityAutoConfiguration
   data:
     redis:
       host: ${REDIS_HOST}
@@ -74,3 +79,8 @@ management:
   endpoint:
     health:
       show-details: always
+  health:
+        readiness-state:
+          enabled: true
+        liveness-state:
+          enabled: true
