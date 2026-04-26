@@ -1,15 +1,15 @@
 spring:
+  main:
+    lazy-initialization: true
+    banner-mode: off
+  jmx:
+    enabled: false
   security:
     oauth2:
       resourceserver:
         jwt:
           issuer-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}
           jwk-set-uri: ${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM:ai-agent-realm}/protocol/openid-connect/certs
-
-# Désactiver la validation au démarrage
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.actuate.autoconfigure.security.reactive.ReactiveManagementWebSecurityAutoConfiguration
   data:
     redis:
       host: ${REDIS_HOST}
@@ -28,8 +28,6 @@ spring:
 server:
   port: ${PORT:8080}
   address: 0.0.0.0
-  tomcat:
-     connection-timeout: 60s
 
 anthropic:
   api-key: ${ANTHROPIC_API_KEY}
@@ -78,12 +76,14 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health
   endpoint:
     health:
       show-details: always
+      probes:
+        enabled: true
   health:
-        readiness-state:
-          enabled: true
-        liveness-state:
-          enabled: true
+    readiness-state:
+      enabled: true
+    liveness-state:
+      enabled: true
