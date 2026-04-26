@@ -77,33 +77,39 @@ public class SecurityConfig {
 
             // ── Filtre token de test ──────────────────────────────────
             .addFilterBefore(
-                (request, response, chain) -> {
-                    HttpServletRequest req = (HttpServletRequest) request;
-                    String auth = req.getHeader("Authorization");
+            	    (servletRequest, servletResponse, chain) -> {
+            	        var httpRequest =
+            	            (jakarta.servlet.http.HttpServletRequest) servletRequest;
+            	        String authHeader = httpRequest.getHeader("Authorization");
 
-                    if (auth != null && auth.startsWith("Bearer test-token-")) {
-                        String username = auth.replace("Bearer test-token-", "");
+            	        if (authHeader != null
+            	                && authHeader.startsWith("Bearer test-token-")) {
 
-                        List<SimpleGrantedAuthority> roles = "admin-demo".equals(username)
-                            ? List.of(
-                                new SimpleGrantedAuthority("ROLE_AI_USER"),
-                                new SimpleGrantedAuthority("ROLE_AI_ADMIN"))
-                            : List.of(
-                                new SimpleGrantedAuthority("ROLE_AI_USER"));
+            	            String username = authHeader
+            	                .replace("Bearer test-token-", "");
 
-                        UsernamePasswordAuthenticationToken authentication =
-                            new UsernamePasswordAuthenticationToken(
-                                username, null, roles);
+            	            boolean admin = "admin-demo".equals(username);
 
-                        SecurityContextHolder.getContext()
-                            .setAuthentication(authentication);
+            	            var authorities = admin
+            	                ? java.util.List.of(
+            	                    new SimpleGrantedAuthority("ROLE_AI_USER"),
+            	                    new SimpleGrantedAuthority("ROLE_AI_ADMIN"))
+            	                : java.util.List.of(
+            	                    new SimpleGrantedAuthority("ROLE_AI_USER"));
 
-                        log.debug("Auth test : {} | Rôles : {}", username, roles);
-                    }
-                    chain.doFilter(request, response);
-                },
-                UsernamePasswordAuthenticationFilter.class
-            )
+            	            var authToken =
+            	                new UsernamePasswordAuthenticationToken(
+            	                    username, null, authorities);
+
+            	            SecurityContextHolder
+            	                .getContext()
+            	                .setAuthentication(authToken);
+            	        }
+
+            	        chain.doFilter(servletRequest, servletResponse);
+            	    },
+            	    UsernamePasswordAuthenticationFilter.class
+            	)
 
             .exceptionHandling(ex -> ex
                 .authenticationEntryPoint((request, response, e) -> {
