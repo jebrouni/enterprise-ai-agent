@@ -1,6 +1,5 @@
 package com.enterprise.aiagent.security.filter;
 
-import com.enterprise.aiagent.core.exception.RateLimitException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -15,26 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.time.Duration;
-import java.util.concurrent.TimeUnit;
 
-/**
- * ┌──────────────────────────────────────────────────────────────────────┐
- *  FILTRE DE RATE LIMITING — Redis Sliding Window
- *
- *  Stratégie : compteur glissant par utilisateur (userId depuis JWT).
- *  Pour les requêtes anonymes : compteur par IP.
- *
- *  Limites configurables par rôle :
- *  - AI_USER  → 30 requêtes / minute
- *  - AI_ADMIN → 100 requêtes / minute
- *  - Anonyme  → 5 requêtes / minute (health check uniquement)
- *
- *  Headers retournés :
- *  X-Rate-Limit-Limit     : limite totale
- *  X-Rate-Limit-Remaining : requêtes restantes
- *  X-Rate-Limit-Reset     : timestamp de reset (epoch seconds)
- * └──────────────────────────────────────────────────────────────────────┘
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor
@@ -53,81 +33,66 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     @Override
     protected void doFilterInternal(
-            @NonNull HttpServletRequest  request,
+            @NonNull HttpServletRequest request,
             @NonNull HttpServletResponse response,
-            @NonNull FilterChain         chain
-    ) throws ServletException, IOException {
+            @NonNull FilterChain filterChain) throws ServletException, IOException {
 
-        // Ignorer les endpoints publics
-        String uri = request.getRequestURI();
-        if (isPublicEndpoint(uri)) {
-            chain.doFilter(request, response);
+        // Endpoints publics → pas de rate limiting
+        if (isPublicEndpoint(request.getRequestURI())) {
+            filterChain.doFilter(request, response);
             return;
         }
 
-        // Identifier l'utilisateur (depuis JWT ou IP en fallback)
-        String clientKey  = extractClientKey(request);
-        boolean isAdmin   = isAdminRequest(request);
-        int limit         = isAdmin ? adminLimit : userLimit;
-
-        String redisKey   = "rate_limit:" + clientKey;
-
         try {
-            Long currentCount = redisTemplate.opsForValue().increment(redisKey);
+            String key   = "rate_limit:" + extractClientKey(request);
+            Long   count = redisTemplate.opsForValue().increment(key);
 
-            if (currentCount == null) {
-                chain.doFilter(request, response);
-                return;
+            if (count == 1) {
+                redisTemplate.expire(key, Duration.ofSeconds(windowSeconds));
             }
 
-            // Initialiser le TTL à la première requête de la fenêtre
-            if (currentCount == 1) {
-                redisTemplate.expire(redisKey, Duration.ofSeconds(windowSeconds));
-            }
+            int limit = isAdminRequest(request) ? adminLimit : userLimit;
+            long reset = System.currentTimeMillis() / 1000 + windowSeconds;
 
-            Long ttl      = redisTemplate.getExpire(redisKey, TimeUnit.SECONDS);
-            int remaining = Math.max(0, limit - currentCount.intValue());
-            long resetAt  = System.currentTimeMillis() / 1000 + (ttl != null ? ttl : windowSeconds);
-
-            // Headers de rate limit
             response.setHeader("X-Rate-Limit-Limit",     String.valueOf(limit));
-            response.setHeader("X-Rate-Limit-Remaining", String.valueOf(remaining));
-            response.setHeader("X-Rate-Limit-Reset",     String.valueOf(resetAt));
+            response.setHeader("X-Rate-Limit-Remaining", String.valueOf(Math.max(0, limit - count)));
+            response.setHeader("X-Rate-Limit-Reset",     String.valueOf(reset));
 
-            if (currentCount > limit) {
-                log.warn("⛔ Rate limit dépassé pour: {} ({}/{})", clientKey, currentCount, limit);
+            if (count > limit) {
+                log.warn("Rate limit dépassé pour : {}", key);
                 response.setStatus(429);
                 response.setContentType("application/json");
-                response.getWriter().write("""
-                    {
-                      "success": false,
-                      "errorCode": "RATE_LIMIT_EXCEEDED",
-                      "message": "Trop de requêtes. Limite: %d req/%ds. Réessayez dans %d secondes.",
-                      "retryAfterSeconds": %d
-                    }
-                    """.formatted(limit, windowSeconds, ttl != null ? ttl : windowSeconds, ttl != null ? ttl : windowSeconds));
+                response.getWriter().write(
+                    "{\"success\":false,\"errorCode\":\"RATE_LIMIT_EXCEEDED\"," +
+                    "\"message\":\"Limite de requêtes dépassée. Réessayez dans 1 minute.\"}");
                 return;
             }
 
         } catch (Exception e) {
-            // Si Redis est indisponible, on laisse passer (fail-open)
-            log.error("⚠️ Redis indisponible pour le rate limiting. Requête autorisée.", e);
+            // Redis indisponible → fail-open (laisser passer)
+            log.warn("Redis indisponible pour rate limiting → requête autorisée: {}", e.getMessage());
         }
 
-        chain.doFilter(request, response);
+        filterChain.doFilter(request, response);
     }
 
+    // ── Helpers ───────────────────────────────────────────────────────────
+
     private String extractClientKey(HttpServletRequest request) {
-        // Essayer d'extraire le sub (userId) depuis le JWT via le header Authorization
         String auth = request.getHeader("Authorization");
+        if (auth != null && auth.startsWith("Bearer test-token-")) {
+            // Token de test → extraire le username
+            return "user:" + auth.replace("Bearer test-token-", "");
+        }
         if (auth != null && auth.startsWith("Bearer ")) {
             try {
-                // Extraction simple du sub sans vérification (déjà validé par Spring Security)
-                String token  = auth.substring(7);
-                String payload= new String(java.util.Base64.getUrlDecoder()
+                // Token JWT → extraire le sub
+                String token   = auth.substring(7);
+                String payload = new String(java.util.Base64.getUrlDecoder()
                         .decode(token.split("\\.")[1]));
                 com.fasterxml.jackson.databind.JsonNode node =
-                        new com.fasterxml.jackson.databind.ObjectMapper().readTree(payload);
+                        new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readTree(payload);
                 if (node.has("sub")) {
                     return "user:" + node.get("sub").asText();
                 }
@@ -140,12 +105,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private boolean isAdminRequest(HttpServletRequest request) {
         String auth = request.getHeader("Authorization");
-        return auth != null && auth.contains("AI_ADMIN");
+        return auth != null && auth.contains("admin-demo");
     }
 
     private boolean isPublicEndpoint(String uri) {
-        return uri.contains("/health") || uri.contains("/swagger")
-            || uri.contains("/api-docs") || uri.contains("/actuator/health")
-            || uri.contains("/auth/token");
+        return uri.contains("/health")
+            || uri.contains("/swagger")
+            || uri.contains("/api-docs")
+            || uri.contains("/actuator")
+            || uri.contains("/auth/token")
+            || uri.contains("/auth/logout");
     }
 }
