@@ -71,15 +71,13 @@ public class SecurityConfig {
 
         config.setAllowedOriginPatterns(List.of(
                 "http://localhost:4200",
+                "http://localhost:3000",
                 "https://*.vercel.app",
-                "https://ai-agent-frontend.vercel.app"
+                "https://ai-agent-frontend-ashy.vercel.app"  // ← ton URL exacte
         ));
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of(
-                "Authorization", "Content-Type", "X-Request-ID",
-                "X-Correlation-ID", "Accept-Language"
-        ));
+        config.setAllowedHeaders(List.of("*"));
         config.setExposedHeaders(List.of(
                 "X-Request-ID", "X-Rate-Limit-Remaining", "X-Processing-Time-Ms"
         ));
@@ -87,7 +85,7 @@ public class SecurityConfig {
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/api/**", config);
+        source.registerCorsConfiguration("/**", config);  // ← changer /api/** en /**
         return source;
     }
 }
