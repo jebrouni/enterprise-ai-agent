@@ -38,30 +38,71 @@ public class SecurityConfig {
             .sessionManagement(session ->
                 session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
 
-            // ← Tout autoriser temporairement sans token
+            // ── Autorisations ─────────────────────────────────────────
             .authorizeHttpRequests(auth -> auth
-                .anyRequest().permitAll()
+                .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                .requestMatchers(ADMIN_ENDPOINTS).hasRole("AI_ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/agent/ask")
+                    .hasAnyRole("AI_USER", "AI_ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/agent/review")
+                    .hasAnyRole("AI_USER", "AI_ADMIN")
+                .requestMatchers(HttpMethod.POST, "/api/v1/agent/chat")
+                    .hasAnyRole("AI_USER", "AI_ADMIN")
+                .anyRequest().authenticated()
             )
 
-            // ── Gestionnaire d'accès refusé ───────────────────────────────
+            // ── Filtre token de test (inline) ─────────────────────────
+            .addFilterBefore(
+                (request, response, chain) -> {
+                    var req = (jakarta.servlet.http.HttpServletRequest) request;
+                    String auth = req.getHeader("Authorization");
+
+                    if (auth != null && auth.startsWith("Bearer test-token-")) {
+                        String username = auth.replace("Bearer test-token-", "");
+
+                        var roles = "admin-demo".equals(username)
+                            ? java.util.List.of(
+                                new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_AI_USER"),
+                                new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_AI_ADMIN"))
+                            : java.util.List.of(
+                                new org.springframework.security.core.authority.SimpleGrantedAuthority("ROLE_AI_USER"));
+
+                        var authentication =
+                            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+                                username, null, roles);
+
+                        org.springframework.security.core.context.SecurityContextHolder
+                            .getContext().setAuthentication(authentication);
+                    }
+                    chain.doFilter(request, response);
+                },
+                UsernamePasswordAuthenticationFilter.class
+            )
+
+            // ── Gestion erreurs ───────────────────────────────────────
             .exceptionHandling(ex -> ex
-                .accessDeniedHandler((request, response, denied) -> {
+                .authenticationEntryPoint((request, response, e) -> {
+                    response.setStatus(401);
+                    response.setContentType("application/json");
+                    response.getWriter().write("""
+                        {"success":false,"errorCode":"UNAUTHORIZED",
+                         "message":"Token manquant ou invalide."}
+                        """);
+                })
+                .accessDeniedHandler((request, response, e) -> {
                     response.setStatus(403);
                     response.setContentType("application/json");
                     response.getWriter().write("""
-                        {
-                          "success": false,
-                          "errorCode": "FORBIDDEN",
-                          "message": "Accès refusé."
-                        }
+                        {"success":false,"errorCode":"FORBIDDEN",
+                         "message":"Permissions insuffisantes."}
                         """);
                 })
             )
 
             .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-            .addFilterAfter(jwtAuditFilter, UsernamePasswordAuthenticationFilter.class);
+            .addFilterAfter(jwtAuditFilter,   UsernamePasswordAuthenticationFilter.class);
 
-        log.info("✅ Sécurité configurée en mode OPEN (sans Keycloak)");
+        log.info("✅ Sécurité configurée avec succès");
         return http.build();
     }
 
